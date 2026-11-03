@@ -85,3 +85,8 @@ T4 で ΔE‡ ≈ 26 kcal/mol、虚数振動 −478 cm⁻¹ が 1 つ。1 構造
 | remote.py | Colab | 構造ごとの UMA 計算、doctor、重みの取得（`python remote.py bundle_dir` で単体でも動く） |
 
 仕様の詳細は「tsrelay 仕様書」（Claude Docs）を参照。
+
+## ライセンス
+
+このリポジトリのコードは [MIT](LICENSE)。UMA の重みは含まず、facebook/UMA の利用規約に従って各自で取得する。
+xtb、fairchem-core、pydmf、Sella などの依存先はそれぞれのライセンスに従う。

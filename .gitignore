@@ -4,3 +4,7 @@ __pycache__/
 # 計算の作業場所と出力
 run*/
 *.pt
+*.tar.gz
+# 秘密情報を誤って追加しないように
+.hf_token
+.env

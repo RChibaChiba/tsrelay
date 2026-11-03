@@ -11,7 +11,8 @@ from pathlib import Path
 
 INDEX = r"""<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><title>tsrelay: dock 候補の選択</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.5.5/3Dmol-min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.5.5/3Dmol-min.js"
+  integrity="sha384-OsczYbldvrHgslr9fFp/i4GiLSeuw9l+QIlv99ITw8soOwXcoGeflFMLg+CU/X1d" crossorigin="anonymous"></script>
 <style>
 body{font-family:system-ui,sans-serif;margin:16px;background:#fafafa;color:#222}
 header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
@@ -70,7 +71,16 @@ def serve(d, cands, core, directed, port=8000):
     result = {}
 
     class Handler(BaseHTTPRequestHandler):
+        def bad_host(self):
+            """DNS リバインディング対策: 自分宛て以外の Host は断る。"""
+            if self.headers.get("Host", "").split(":")[0] in ("localhost", "127.0.0.1"):
+                return False
+            self.send_error(403)
+            return True
+
         def do_GET(self):
+            if self.bad_host():
+                return
             if self.path != "/":
                 self.send_error(404)
                 return
@@ -81,10 +91,16 @@ def serve(d, cands, core, directed, port=8000):
             self.wfile.write(html)
 
         def do_POST(self):
+            if self.bad_host():
+                return
             if self.path != "/select":
                 self.send_error(404)
                 return
-            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
+            # JSON に限ると、他のサイトからの POST はプリフライトで止まる（OPTIONS には応じない）
+            if self.headers.get("Content-Type") != "application/json":
+                self.send_error(415)
+                return
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             known = {c["id"] for c in cands}
             result["ids"] = [i for i in body.get("ids", []) if i in known]
             self.send_response(200)
