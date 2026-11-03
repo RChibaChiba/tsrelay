@@ -20,7 +20,9 @@ from remote import fit
 HARTREE_KCAL = 627.509474
 # 3〜12 族、ランタノイド、アクチノイド、Al・Ga・In・Sn・Pb・Bi
 METALS = set(range(21, 31)) | set(range(39, 49)) | set(range(57, 81)) | set(range(89, 113)) | {13, 31, 49, 50, 82, 83}
-DIRECTED_SCALE = 1.5  # directed 原子と金属の距離の上限（共有結合半径の和に掛ける）
+# directed 原子と金属の距離の上限（共有結合半径の和に掛ける）。かさ高い配位子では directed 原子が
+# 同時には寄れないので緩めにし、外を向いた構造だけを落とす
+DIRECTED_SCALE = 2.0
 CORE_TOL = 0.05       # 重ね合わせ後のコアのずれの上限（Å）
 DUP_RMSD = 0.25       # 重複とみなす基質の重原子の RMSD（Å）
 
