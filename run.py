@@ -1,14 +1,12 @@
 """tsrelay の入口。段階を順に呼び、done のある段階は飛ばす。
 
-    python run.py settings.ini [--yes]
+    python run.py settings.ini [--yes] [--keep]
 
 段階ごとのフォルダ（workdir/work/NN_name）に done を置くのが唯一の状態管理。消せばその段階からやり直す。
 """
 import argparse
 import csv
 import difflib
-import hashlib
-import io
 import json
 import os
 import shutil
@@ -21,7 +19,7 @@ from pathlib import Path
 import colab
 import local
 import pick
-from remote import PINS
+from remote import PINS, md5sum
 
 HERE = Path(__file__).resolve().parent
 POLL_S = 60
@@ -30,14 +28,6 @@ SETUP = ("if [ ! -f setup.ok ]; then apt-get -qq update && apt-get -qq install -
 # トークンのファイルは取得の成否にかかわらず消す
 FETCH = "python bundle/remote.py bundle --fetch-uma; rc=$?; rm -f .hf_token; exit $rc"
 DOCTOR = "python bundle/remote.py bundle --doctor"
-
-
-def md5sum(path):
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for b in iter(lambda: f.read(1 << 24), b""):
-            h.update(b)
-    return h.hexdigest()
 
 
 def hf_token():
@@ -137,13 +127,13 @@ class Run:
         S, s = self.S, self.S["session"]
         if not S["checkpoint"].exists():
             raise SystemExit(f"UMA の重みがありません: {S['checkpoint']}")
-        if not colab.auth_ok():
-            raise SystemExit("colab の認証が通りません。`colab --auth oauth2 sessions` を実行して確かめてください")
         for attempt in range(3):
             try:
                 colab.ensure_session(s, "T4", self.log)
                 break
             except colab.ColabError as e:
+                if e.auth:
+                    raise SystemExit("colab の認証が通りません。`colab --auth oauth2 sessions` を実行して確かめてください")
                 self.log(f"T4 のランタイムを作れません（{attempt + 1}/3）: {str(e)[:300]}")
                 if attempt == 2:
                     raise SystemExit("T4 が割り当てられないため終了します。同じコマンドで続きから再開できます")
@@ -166,17 +156,15 @@ class Run:
 
     def prepare(self, d1, d3, todo, metals, n_sub):
         S, s = self.S, self.S["session"]
-        job = dict(charge=S["charge"], mult=S["mult"], bonds=[list(b) for b in S["bonds"]], nstep=S["nstep"],
+        job = dict(charge=S["charge"], mult=S["mult"], bonds=S["bonds"], nstep=S["nstep"],
                    fmax_opt=S["fmax_opt"], fmax_ts=S["fmax_ts"], metals=metals, n_sub=n_sub,
                    checkpoint=f"{colab.RDIR}/uma.pt", uma_file=f"checkpoints/{S['checkpoint'].name}",
                    uma_md5=md5sum(S["checkpoint"]))
+        (d3 / "job.json").write_text(json.dumps(job))
         bundle = d3 / "bundle.tar.gz"
         with tarfile.open(bundle, "w:gz") as tar:
             tar.add(HERE / "remote.py", arcname="remote.py")
-            data = json.dumps(job).encode()
-            info = tarfile.TarInfo("job.json")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
+            tar.add(d3 / "job.json", arcname="job.json")
             for i in todo:
                 tar.add(d1 / f"{i}.xyz", arcname=f"cands/{i}.xyz")
         colab.upload(s, bundle, f"{colab.RDIR}/bundle.tar.gz")
@@ -204,19 +192,15 @@ print("TSRELAY_JSON " + json.dumps({"uma": os.path.getsize("uma.pt") if os.path.
         self.log("doctor が通りました")
 
     def detached(self, s, tag, cmd, what, timeout=1800):
+        """cmd を切り離して起動し、終わるまで待つ。rc≠0 なら止まる。"""
         colab.start_detached(s, tag, cmd)
-        info = self.wait(s, tag, timeout)
+        t0 = time.time()
+        while (info := colab.peek(s, tag))["rc"] is None:
+            if time.time() - t0 > timeout:
+                raise SystemExit(f"{what}が {timeout} 秒で終わりませんでした")
+            time.sleep(15)
         if info["rc"] != 0:
             raise SystemExit(f"{what}が失敗しました（rc={info['rc']}）:\n{info['tail']}")
-
-    def wait(self, s, tag, timeout):
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            info = colab.peek(s, tag)
-            if info["rc"] is not None:
-                return info
-            time.sleep(15)
-        raise SystemExit(f"{tag} が {timeout} 秒で終わりませんでした")
 
     def compute(self, d3, out):
         s = self.S["session"]
@@ -254,7 +238,8 @@ print("TSRELAY_JSON {{}}")
         out.mkdir(parents=True, exist_ok=True)
         for i in ids:
             shutil.rmtree(out / i, ignore_errors=True)
-        colab.safe_extract(local_tar, out)
+        with tarfile.open(local_tar) as tar:
+            tar.extractall(out, filter="data")
         for i in ids:
             r = json.loads((out / i / "result.json").read_text())
             self.log(f"回収: {i} {r['status']} {r.get('reason', '')}")

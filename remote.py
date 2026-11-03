@@ -1,13 +1,16 @@
 """リモート段（Colab T4）: 選んだ構造ごとに UMA で p 錯体を整え、逆スキャンで sm 錯体を作り、DMF と Sella で TS を求める。
 
     python remote.py BUNDLE_DIR            # 本計算
-    python remote.py BUNDLE_DIR --doctor   # 環境の検査（doctor.json と doctor.rc を書く）
+    python remote.py BUNDLE_DIR --doctor   # 環境の検査
+    python remote.py BUNDLE_DIR --fetch-uma  # UMA の重みを HF から取る
 
 BUNDLE_DIR には job.json と cands/<ID>.xyz を置く。結果は out/<ID>/ に書き、1 構造済むごとに done を置く。
 番号はすべて 0 始まり（変換は手元の local.load_settings で済んでいる）。
 """
 import argparse
+import hashlib
 import json
+import os
 import sys
 import time
 import traceback
@@ -30,6 +33,22 @@ FD_STEP = 0.005     # 有限差分ヘッセの変位（Å）
 
 UNIT = None
 JOB = None
+
+
+def md5sum(path):
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 24), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def fit(P, Q):
+    """P @ R + t が Q に最も重なる回転 R と並進 t（Kabsch）。"""
+    pc, qc = P.mean(0), Q.mean(0)
+    U, _, Vt = np.linalg.svd((P - pc).T @ (Q - qc))
+    R = U @ np.diag([1, 1, np.sign(np.linalg.det(U @ Vt))]) @ Vt
+    return R, qc - pc @ R
 
 
 # ---------- UMA ----------
@@ -88,7 +107,7 @@ def reverse_scan(atoms, bonds, nstep, fmax):
         # 既定の tolerance=1e-13 では UMA の力で収束判定が通らず例外になる
         atoms.set_constraint(FixBondLengths(pairs, bondlengths=targets, tolerance=1e-6, iterations=1000))
         LBFGS(atoms, logfile=None).run(fmax=fmax, steps=500)
-        frames.append((bare(atoms), energy(atoms)))
+        frames.append(bare(atoms))
     atoms.set_constraint()
     return frames
 
@@ -114,13 +133,6 @@ def check_sm(sm, p):
     shift = min_sub_metal(sm) - min_sub_metal(p)
     warn = f"基質–金属の最短距離が p から {shift:+.2f} Å 変わった" if abs(shift) >= SM_SHIFT else None
     return None, warn
-
-
-def fit(P, Q):
-    pc, qc = P.mean(0), Q.mean(0)
-    U, _, Vt = np.linalg.svd((P - pc).T @ (Q - qc))
-    R = U @ np.diag([1, 1, np.sign(np.linalg.det(U @ Vt))]) @ Vt
-    return R, qc - pc @ R
 
 
 def run_dmf(sm, p, out):
@@ -185,8 +197,7 @@ def run_one(cid, src, out):
     write(out / "p.xyz", bare(p))
 
     sm = setup(bare(p))
-    frames = reverse_scan(sm, JOB["bonds"], JOB["nstep"], JOB["fmax_opt"])
-    write(out / "scan.xyz", [a for a, _ in frames])
+    write(out / "scan.xyz", reverse_scan(sm, JOB["bonds"], JOB["nstep"], JOB["fmax_opt"]))
     minimize(sm, JOB["fmax_opt"])
     res["E_sm"] = energy(sm)
     write(out / "sm.xyz", bare(sm))
@@ -231,33 +242,21 @@ def run_one(cid, src, out):
 
 # ---------- doctor ----------
 
-def doctor(d):
-    info, ok = {}, True
-    try:
-        import torch
-        from importlib.metadata import version
-        info["gpu"] = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
-        ok &= bool(info["gpu"]) and "T4" in info["gpu"]
-        info["versions"] = {k: version(k) for k in PINS}
-        ok &= info["versions"] == PINS
-        import cyipopt, dmf, sella  # noqa: F401
-        from ase import Atoms
-        global UNIT
-        UNIT = load_unit(JOB["checkpoint"])
-        w = Atoms("OH2", positions=[[0, 0, 0.117], [0, 0.757, -0.469], [0, -0.757, -0.469]])
-        w.info.update(charge=0, spin=1)
-        from fairchem.core import FAIRChemCalculator
-        w.calc = FAIRChemCalculator(UNIT, task_name="omol")
-        info["water_eV"] = float(w.get_potential_energy())
-    except Exception as e:
-        ok = False
-        info["error"] = f"{type(e).__name__}: {e}"
-        info["traceback"] = traceback.format_exc()[-3000:]
-    info["ok"] = bool(ok)
-    (d / "doctor.json").write_text(json.dumps(info, indent=1))
-    (d / "doctor.rc").write_text("0\n" if ok else "1\n")
+def doctor():
+    """GPU が T4 か、版が PINS どおりか、UMA で水のエネルギーが出るかを確かめる。例外はそのまま rc≠0 になる。"""
+    import torch
+    from importlib.metadata import version
+    from ase import Atoms
+    import cyipopt, dmf, sella  # noqa: F401
+    gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+    versions = {k: version(k) for k in PINS}
+    global UNIT
+    UNIT = load_unit(JOB["checkpoint"])
+    w = setup(Atoms("OH2", positions=[[0, 0, 0.117], [0, 0.757, -0.469], [0, -0.757, -0.469]]))
+    w.info.update(charge=0, spin=1)
+    info = dict(gpu=gpu, versions=versions, water_eV=energy(w))
     print(json.dumps(info, indent=1))
-    return 0 if ok else 1
+    return 0 if gpu and "T4" in gpu and versions == PINS else 1
 
 
 def fetch_uma(d):
@@ -265,20 +264,14 @@ def fetch_uma(d):
 
     トークンは bundle の隣の .hf_token で受け取り、読んだらすぐ消す（ディスクにもログにも残さない）。
     """
-    import hashlib
-    import os
     from huggingface_hub import hf_hub_download
     tok = d.parent / ".hf_token"
     token = tok.read_text().strip()
     tok.unlink()
     dst = Path(JOB["checkpoint"])
     src = hf_hub_download("facebook/UMA", JOB["uma_file"], token=token, local_dir=dst.parent / "hf")
-    h = hashlib.md5()
-    with open(src, "rb") as f:
-        for b in iter(lambda: f.read(1 << 24), b""):
-            h.update(b)
-    if h.hexdigest() != JOB["uma_md5"]:
-        print(f"MD5 が手元の重みと一致しません: {h.hexdigest()} != {JOB['uma_md5']}")
+    if md5sum(src) != JOB["uma_md5"]:
+        print(f"MD5 が手元の重みと一致しません: {md5sum(src)} != {JOB['uma_md5']}")
         return 1
     os.replace(src, dst)
     print(f"{JOB['uma_file']} を取得しました")
@@ -294,11 +287,10 @@ def main():
     a = ap.parse_args()
     d = Path(a.bundle).resolve()
     JOB = json.loads((d / "job.json").read_text())
-    JOB["bonds"] = [tuple(b) for b in JOB["bonds"]]
     if a.fetch_uma:
         sys.exit(fetch_uma(d))
     if a.doctor:
-        sys.exit(doctor(d))
+        sys.exit(doctor())
     UNIT = load_unit(JOB["checkpoint"])
     for src in sorted((d / "cands").glob("*.xyz")):
         cid = src.stem

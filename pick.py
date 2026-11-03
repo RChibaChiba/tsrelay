@@ -94,14 +94,10 @@ def serve(d, cands, core, directed, port=8000):
         def log_message(self, *args):
             pass
 
-    for p in range(port, port + 50):
-        try:
-            srv = ThreadingHTTPServer(("127.0.0.1", p), Handler)
-            break
-        except OSError:
-            continue
-    else:
-        raise SystemExit(f"ポート {port}〜{port + 49} がすべて使用中です")
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError:  # 使用中なら空いているポートを OS に選ばせる
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     url = f"http://localhost:{srv.server_address[1]}/"
     print(f"候補を選んで確定してください: {url}", flush=True)
     if shutil.which("wslview"):

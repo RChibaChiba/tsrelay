@@ -7,7 +7,6 @@ import json
 import re
 import shutil
 import subprocess
-import tarfile
 import tempfile
 import threading
 import time
@@ -65,14 +64,6 @@ def run(args, stdin=None, timeout=120, check=True, done=None):
         raise ColabError(f"colab {' '.join(args[:2])} → exit {p.returncode}\n{out.strip()[-2000:]}",
                          auth=bool(AUTH_PAT.search(out)) and not lost, lost=lost)
     return out
-
-
-def auth_ok():
-    try:
-        run(["sessions"], timeout=120)
-        return True
-    except ColabError:
-        return False
 
 
 def exists(session):
@@ -179,8 +170,3 @@ print("TSRELAY_JSON " + json.dumps(info))
 def stop(session):
     """ランタイムを止める。既に消えていても失敗扱いにしない。"""
     run(["stop", "-s", session], timeout=300, check=False)
-
-
-def safe_extract(archive, dest):
-    with tarfile.open(archive) as tar:
-        tar.extractall(dest, filter="data")

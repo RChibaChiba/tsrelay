@@ -13,6 +13,9 @@ from pathlib import Path
 import numpy as np
 from ase import Atoms
 from ase.data import covalent_radii
+from ase.io import write
+
+from remote import fit
 
 HARTREE_KCAL = 627.509474
 # 3〜12 族、ランタノイド、アクチノイド、Al・Ga・In・Sn・Pb・Bi
@@ -35,19 +38,6 @@ def read_xyz(path):
         out.append((atoms, lines[i + 1]))
         i += n + 2
     return out
-
-
-def write_xyz(path, atoms, comment=""):
-    rows = [f"{s:2s} {x:14.8f} {y:14.8f} {z:14.8f}" for s, (x, y, z) in zip(atoms.get_chemical_symbols(), atoms.positions)]
-    Path(path).write_text(f"{len(atoms)}\n{comment}\n" + "\n".join(rows) + "\n")
-
-
-def fit(P, Q):
-    """P @ R + t が Q に最も重なる回転 R と並進 t（Kabsch）。"""
-    pc, qc = P.mean(0), Q.mean(0)
-    U, _, Vt = np.linalg.svd((P - pc).T @ (Q - qc))
-    R = U @ np.diag([1, 1, np.sign(np.linalg.det(U @ Vt))]) @ Vt
-    return R, qc - pc @ R
 
 
 def bonded(Z, X, i, j, scale):
@@ -146,12 +136,6 @@ def validate(S, sub, cat):
         raise SystemExit("設定エラー:\n  " + "\n  ".join(errs))
 
 
-def write_chrg_uhf(S, d):
-    """xtb dock 用の .CHRG と .UHF（上から全体、input1、input2）。多重度 → 不対電子数の変換はここだけ。"""
-    Path(d, ".CHRG").write_text(f"{S['charge']}\n{S['sub_charge']}\n{S['cat_charge']}\n")
-    Path(d, ".UHF").write_text(f"{S['mult'] - 1}\n{S['sub_mult'] - 1}\n{S['cat_mult'] - 1}\n")
-
-
 # ---------- コア ----------
 
 def detect_core(S, sub, cat):
@@ -200,8 +184,10 @@ def run_dock(S, d, core):
     d = Path(d)
     shutil.copy(S["substrate"], d / "substrate.xyz")
     shutil.copy(S["catalyst"], d / "catalyst.xyz")
-    write_chrg_uhf(S, d)
-    one = lambda idx: ",".join(str(i + 1) for i in idx)
+    # .CHRG と .UHF は上から全体、input1、input2。多重度 → 不対電子数の変換はここだけ
+    (d / ".CHRG").write_text(f"{S['charge']}\n{S['sub_charge']}\n{S['cat_charge']}\n")
+    (d / ".UHF").write_text(f"{S['mult'] - 1}\n{S['sub_mult'] - 1}\n{S['cat_mult'] - 1}\n")
+    one =lambda idx: ",".join(str(i + 1) for i in idx)
     (d / "xcontrol.inp").write_text(
         f"$fix\n   atoms: {one(core)}\n$end\n$directed\n   atoms: {one(S['directed'])}\n$end\n")
     xtb, env = _xtb_env(S)
@@ -256,7 +242,7 @@ def collect_candidates(S, d, sub, cat, core, metals, log):
     e0 = min(c["e_h"] for _, c in kept)
     for atoms, c in kept:
         c["rel_kcal"] = round((c["e_h"] - e0) * HARTREE_KCAL, 2)
-        write_xyz(d / f"{c['id']}.xyz", atoms, f"{c['id']} E={c['e_h']:.8f}")
+        write(d / f"{c['id']}.xyz", atoms, format="xyz", comment=f"{c['id']} E={c['e_h']:.8f}")
     cands = [c for _, c in kept]
     (d / "candidates.json").write_text(json.dumps(cands, indent=1))
     log(f"dock 候補: {len(cands)} 個を残した")
