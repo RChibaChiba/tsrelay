@@ -14,8 +14,7 @@ WSL（ローカル）                               Colab（無料 T4）
 - xtb 6.6.1（6.7.1 の公式バイナリは `xtb dock` が segfault する）
 - [google-colab-cli](https://pypi.org/project/google-colab-cli/)（`colab --auth oauth2 sessions` が通ること）
 - Hugging Face のトークン（facebook/UMA の利用許可を得たアカウントで `hf auth login`、または環境変数 `HF_TOKEN`）
-- UMA の重み `uma-s-1p2p1.pt` を手元にも置く。ランタイムは HF から同じファイルを直接取り、手元の重みと MD5 を照合する
-  （手元から 2 GB 級を送ると遅く、WSL のメモリも足りないため）
+- UMA の重みは手元に要らない。ランタイムが HF から直接取る（手元から 2 GB 級を送ると遅いため）
 
 ## 使い方
 
@@ -50,7 +49,7 @@ cd examples/pd_re
 | `[dock]` | `directed_atoms`（金属に向ける基質原子）、`xtb_args` |
 | `[core]` | `cutoff_scale`、`add_atoms` / `drop_atoms`（触媒の番号）。金属が複数あればすべてコアにする |
 | `[scan]` | `bonds = i-j:目標Å, ...`（伸ばすペアと縮めるペア）、`nstep` |
-| `[uma]` | `checkpoint`（手元の重み） |
+| `[uma]` | `model`（facebook/UMA のモデル名。既定は `uma-s-1p2p1`） |
 | `[ts]` | `fmax_opt`、`fmax_ts` |
 | `[run]` | `cores`（xtb のスレッド数）、`session`（Colab のランタイム名） |
 
@@ -72,7 +71,8 @@ status が ok になるのは、Sella が収束し、50 cm⁻¹ 以上の虚数�
 
 Pd(PH₃)₂ からのエタンの還元的脱離を、生成物側（エタン錯体）から逆にたどる 17 原子の系。
 T4 で ΔE‡ ≈ 26 kcal/mol、虚数振動 −478 cm⁻¹ が 1 つ。1 構造 30 秒〜2 分程度、
-ランタイムごとに環境の準備に約 4 分、重みの取得と doctor に約 3 分かかる。
+ランタイムごとに環境の準備に約 4 分、重みの取得と doctor に約 3 分かかる
+（`--keep` で残したランタイムを再利用すれば、準備と取得は省かれる）。
 
 ## ファイル
 

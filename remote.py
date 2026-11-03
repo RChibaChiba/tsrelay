@@ -8,7 +8,6 @@ BUNDLE_DIR には job.json と cands/<ID>.xyz を置く。結果は out/<ID>/ �
 番号はすべて 0 始まり（変換は手元の local.load_settings で済んでいる）。
 """
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -33,14 +32,6 @@ FD_STEP = 0.005     # 有限差分ヘッセの変位（Å）
 
 UNIT = None
 JOB = None
-
-
-def md5sum(path):
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for b in iter(lambda: f.read(1 << 24), b""):
-            h.update(b)
-    return h.hexdigest()
 
 
 def fit(P, Q):
@@ -260,7 +251,7 @@ def doctor():
 
 
 def fetch_uma(d):
-    """UMA の重みを Hugging Face から取り、手元の重みと MD5 を照合する。
+    """UMA の重みを Hugging Face から取る。取り終えてから checkpoint に置くので、途中で切れても半端なファイルは残らない。
 
     トークンは bundle の隣の .hf_token で受け取り、読んだらすぐ消す（ディスクにもログにも残さない）。
     """
@@ -270,9 +261,6 @@ def fetch_uma(d):
     tok.unlink()
     dst = Path(JOB["checkpoint"])
     src = hf_hub_download("facebook/UMA", JOB["uma_file"], token=token, local_dir=dst.parent / "hf")
-    if md5sum(src) != JOB["uma_md5"]:
-        print(f"MD5 が手元の重みと一致しません: {md5sum(src)} != {JOB['uma_md5']}")
-        return 1
     os.replace(src, dst)
     print(f"{JOB['uma_file']} を取得しました")
     return 0

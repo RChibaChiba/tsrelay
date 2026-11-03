@@ -100,7 +100,7 @@ def load_settings(path):
         drop_atoms=[i - 1 for i in _ints(get("core", "drop_atoms", ""))],
         bonds=bonds,
         nstep=int(get("scan", "nstep", "10")),
-        checkpoint=Path(os.path.expanduser(get("uma", "checkpoint"))),
+        model=get("uma", "model", "uma-s-1p2p1"),
         fmax_opt=float(get("ts", "fmax_opt", "0.02")),
         fmax_ts=float(get("ts", "fmax_ts", "0.005")),
         cores=int(get("run", "cores", str(os.cpu_count()))),

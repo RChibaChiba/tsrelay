@@ -19,7 +19,7 @@ from pathlib import Path
 import colab
 import local
 import pick
-from remote import PINS, md5sum
+from remote import PINS
 
 HERE = Path(__file__).resolve().parent
 POLL_S = 60
@@ -125,8 +125,6 @@ class Run:
 
     def remote(self, d1, d3, out, todo, metals, n_sub):
         S, s = self.S, self.S["session"]
-        if not S["checkpoint"].exists():
-            raise SystemExit(f"UMA の重みがありません: {S['checkpoint']}")
         for attempt in range(3):
             try:
                 colab.ensure_session(s, "T4", self.log)
@@ -158,8 +156,7 @@ class Run:
         S, s = self.S, self.S["session"]
         job = dict(charge=S["charge"], mult=S["mult"], bonds=S["bonds"], nstep=S["nstep"],
                    fmax_opt=S["fmax_opt"], fmax_ts=S["fmax_ts"], metals=metals, n_sub=n_sub,
-                   checkpoint=f"{colab.RDIR}/uma.pt", uma_file=f"checkpoints/{S['checkpoint'].name}",
-                   uma_md5=md5sum(S["checkpoint"]))
+                   checkpoint=f"{colab.RDIR}/{S['model']}.pt", uma_file=f"checkpoints/{S['model']}.pt")
         (d3 / "job.json").write_text(json.dumps(job))
         bundle = d3 / "bundle.tar.gz"
         with tarfile.open(bundle, "w:gz") as tar:
@@ -168,18 +165,18 @@ class Run:
             for i in todo:
                 tar.add(d1 / f"{i}.xyz", arcname=f"cands/{i}.xyz")
         colab.upload(s, bundle, f"{colab.RDIR}/bundle.tar.gz")
-        st = colab.py(s, """
+        st = colab.py(s, f"""
 import shutil, tarfile
 shutil.rmtree("bundle", ignore_errors=True)
 with tarfile.open("bundle.tar.gz") as t:
     t.extractall("bundle", filter="data")
-print("TSRELAY_JSON " + json.dumps({"uma": os.path.getsize("uma.pt") if os.path.exists("uma.pt") else 0}))
+print("TSRELAY_JSON " + json.dumps({{"uma": os.path.exists({job['checkpoint']!r})}}))
 """, retries=3)
         self.log(f"{len(todo)} 構造を送りました。環境を準備します")
         self.detached(s, "setup", SETUP, "Colab の環境の準備")
-        if st["uma"] != S["checkpoint"].stat().st_size:
-            # 重みは手元から送らず、ランタイムが HF から直接取る（手元の回線では 2 GB 級の送付が遅すぎるため）
-            self.log("UMA の重みを Hugging Face から取得します")
+        if not st["uma"]:
+            # 重みは手元に置かず、ランタイムが HF から直接取る（取得が済んでから置くので、あれば完全なもの）
+            self.log(f"UMA の重み {S['model']} を Hugging Face から取得します")
             colab.upload_secret(s, hf_token(), f"{colab.RDIR}/.hf_token")
             try:
                 self.detached(s, "uma", FETCH, "UMA の重みの取得")
