@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+# 計算の作業場所と出力
+run*/
+*.pt
