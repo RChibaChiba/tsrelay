@@ -33,6 +33,16 @@ cd examples/pd_re
 | --- | --- |
 | `--yes` | 起動時の y/n 確認を省く |
 | `--keep` | 終わってもランタイムを止めない（調べるとき用。止めるときは `colab stop -s <session>`） |
+| `--dock XYZ` | 手元の dock の結果を使い、xtb dock を飛ばす（xtb がなくても動く） |
+
+`--dock` には `xtb dock` の `final_structures.xyz` を渡す。
+
+```bash
+../../.venv/bin/python ../../run.py settings.ini --dock final_structures.xyz
+```
+
+- 同じ形式なら別の手段で作った構造でもよい。原子は「基質が先、触媒が後」の順で、コメント行の先頭はエネルギー（Hartree）。
+- 候補の検査は通常と同じ。コアが settings.ini の触媒から 0.05 Å 以上ずれた構造は捨てるので、コアを固定して作った構造を渡す。
 
 - 途中で止まっても、同じコマンドで続きから再開する。段階をやり直すときは `work/NN_*` を消す。
 - T4 が割り当てられないときは 30 分おきに 3 回試し、だめなら理由を表示して終了する。

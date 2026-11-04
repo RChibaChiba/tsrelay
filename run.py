@@ -1,6 +1,6 @@
 """tsrelay の入口。段階を順に呼び、done のある段階は飛ばす。
 
-    python run.py settings.ini [--yes] [--keep]
+    python run.py settings.ini [--yes] [--keep] [--dock final_structures.xyz]
 
 段階ごとのフォルダ（workdir/work/NN_name）に done を置くのが唯一の状態管理。消せばその段階からやり直す。
 """
@@ -42,9 +42,12 @@ def hf_token():
 
 
 class Run:
-    def __init__(self, ini, yes, keep):
+    def __init__(self, ini, yes, keep, dock=None):
         self.S = local.load_settings(ini)
         self.yes, self.keep = yes, keep
+        if dock and not Path(dock).is_file():
+            raise SystemExit(f"--dock のファイルがありません: {dock}")
+        self.dock = dock and Path(dock).read_text()
         self.wd = self.S["workdir"]
         self.work = self.wd / "work"
         (self.wd / "log").mkdir(parents=True, exist_ok=True)
@@ -87,13 +90,19 @@ class Run:
             (d / "done").touch()
 
         d1, done = self.stage("01_dock")
+        if done and self.dock and self.dock != (d1 / "final_structures.xyz").read_text():
+            raise SystemExit("--dock の構造が前回と違います。新しい workdir で回してください")
         if not done:
             shutil.rmtree(d1, ignore_errors=True)
             d1.mkdir(parents=True)
-            self.log("xtb dock を実行します")
-            t0 = time.time()
-            local.run_dock(S, d1, core)
-            self.log(f"xtb dock が終わりました（{time.time() - t0:.0f} 秒）")
+            if self.dock:
+                self.log("xtb dock を飛ばし、--dock の構造を使います")
+                (d1 / "final_structures.xyz").write_text(self.dock)
+            else:
+                self.log("xtb dock を実行します")
+                t0 = time.time()
+                local.run_dock(S, d1, core)
+                self.log(f"xtb dock が終わりました（{time.time() - t0:.0f} 秒）")
             local.collect_candidates(S, d1, sub, cat, core, metals, self.log)
             (d1 / "done").touch()
         cands = json.loads((d1 / "candidates.json").read_text())
@@ -274,8 +283,9 @@ def main():
     ap.add_argument("settings")
     ap.add_argument("--yes", action="store_true", help="起動時の y/n 確認を省く")
     ap.add_argument("--keep", action="store_true", help="終わってもランタイムを止めない（調べるとき用）")
+    ap.add_argument("--dock", metavar="XYZ", help="手元の dock の結果（複数構造の xyz）を使い、xtb dock を飛ばす")
     a = ap.parse_args()
-    Run(a.settings, a.yes, a.keep).main()
+    Run(a.settings, a.yes, a.keep, a.dock).main()
 
 
 if __name__ == "__main__":

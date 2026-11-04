@@ -206,6 +206,8 @@ def collect_candidates(S, d, sub, cat, core, metals, log):
     kept = []  # (Atoms をコアで入力に重ねたもの, 情報)
     for k, (atoms, comment) in enumerate(read_xyz(d / "final_structures.xyz")):
         cid = f"cand_{k:03d}"
+        if not np.array_equal(atoms.numbers, Zc):
+            raise SystemExit(f"{cid}: 原子の並びが「基質が先、触媒が後」の入力と合いません")
         e = float(comment.split()[0])
         R, t = fit(atoms.positions[core], ref.positions[core])
         X = atoms.positions @ R + t
