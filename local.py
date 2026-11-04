@@ -46,13 +46,6 @@ def bonded(Z, X, i, j, scale):
     return np.linalg.norm(X[i] - X[j]) <= (covalent_radii[Z[i]] + covalent_radii[Z[j]]) * scale
 
 
-def bond_set(atoms, idx, scale, skip=()):
-    """idx の中の結合の組。skip に含まれる原子が関わる結合は除く。"""
-    Z, X = atoms.numbers, atoms.positions
-    idx = [i for i in idx if i not in skip]
-    return {(i, j) for a, i in enumerate(idx) for j in idx[a + 1:] if bonded(Z, X, i, j, scale)}
-
-
 # ---------- 設定 ----------
 
 def _ints(text):
@@ -207,10 +200,8 @@ def collect_candidates(S, d, sub, cat, core, metals, log):
     d = Path(d)
     n_sub = len(sub)
     ref = sub + cat
-    scale = S["cutoff_scale"]
     Zc = ref.numbers
-    sub_idx, cat_idx = range(n_sub), range(n_sub, len(ref))
-    ref_bonds = bond_set(ref, sub_idx, scale, metals) | bond_set(ref, cat_idx, scale, metals)
+    sub_idx = range(n_sub)
     heavy = [i for i in sub_idx if Zc[i] > 1] or list(sub_idx)
     kept = []  # (Atoms をコアで入力に重ねたもの, 情報)
     for k, (atoms, comment) in enumerate(read_xyz(d / "final_structures.xyz")):
@@ -224,13 +215,10 @@ def collect_candidates(S, d, sub, cat, core, metals, log):
         far = [i for i in S["directed"]
                if min(atoms.get_distance(i, m) / (covalent_radii[Zc[i]] + covalent_radii[Zc[m]]) for m in metals)
                > DIRECTED_SCALE]
-        bonds = bond_set(atoms, sub_idx, scale, metals) | bond_set(atoms, cat_idx, scale, metals)
         dup = next((c["id"] for a, c in kept
                     if np.sqrt(((a.positions[heavy] - X[heavy]) ** 2).sum(1).mean()) < DUP_RMSD), None)
         if dev > CORE_TOL:
             reason = f"コアが {dev:.3f} Å ずれた"
-        elif bonds != ref_bonds:
-            reason = f"分子内の結合が変わった（{len(bonds ^ ref_bonds)} 本）"
         elif far:
             reason = "directed 原子が金属を向いていない（" + ",".join(str(i + 1) for i in far) + "）"
         elif dup:
